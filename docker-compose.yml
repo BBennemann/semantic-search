@@ -1,0 +1,43 @@
+version: '3.8'
+
+services:
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.14.0
+    container_name: elasticsearch_semantico
+    environment:
+      - discovery.type=single-node
+      # Desativa a segurança para facilitar o desenvolvimento local. NÃO FAÇA ISSO EM PRODUÇÃO.
+      - xpack.security.enabled=false
+      # Limita o uso de memória do Elasticsearch para evitar que ele consuma toda a sua RAM.
+      # Ajuste '1g' (1 gigabyte) conforme a memória disponível na sua máquina. '512m' também é uma boa opção.
+      - "ES_JAVA_OPTS=-Xms1g -Xmx1g"
+    ports:
+      - "9200:9200"
+    volumes:
+      - esdata:/usr/share/elasticsearch/data
+    networks:
+      - elastic_net
+
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.14.0
+    container_name: kibana_semantico
+    ports:
+      - "5601:5601"
+    environment:
+      # Diz ao Kibana onde encontrar o Elasticsearch.
+      # 'elasticsearch' é o nome do serviço definido acima.
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+    depends_on:
+      # Garante que o Elasticsearch será iniciado antes do Kibana.
+      - elasticsearch
+    networks:
+      - elastic_net
+
+networks:
+  elastic_net:
+    driver: bridge
+
+volumes:
+  esdata:
+    driver: local
