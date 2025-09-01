@@ -16,14 +16,12 @@ MODELO_EMBEDDING = 'paraphrase-multilingual-MiniLM-L12-v2'
 # --- Cache de Recursos ---
 @st.cache_resource
 def carregar_modelo():
-    """Carrega o modelo de embedding uma única vez."""
     return SentenceTransformer(MODELO_EMBEDDING)
 
 @st.cache_resource
 def conectar_elasticsearch():
-    """Conecta ao Elasticsearch uma única vez."""
     client = Elasticsearch(
-        hosts=["http://127.0.0.1:9200"],
+        hosts=["http://localhost:9200"],
         verify_certs=False,
         ssl_show_warn=False
     )
@@ -98,4 +96,8 @@ if cliente_es and modelo:
         else:
             st.info("Nenhum resultado encontrado.")
 else:
+    if cliente_es:
+        st.error('modelo')
+    else:
+        st.error('client')
     st.error("A aplicação não pôde ser iniciada. Verifique a conexão com o Elasticsearch.")
