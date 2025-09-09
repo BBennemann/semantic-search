@@ -1,61 +1,16 @@
 import streamlit as st
-from elasticsearch import Elasticsearch
-from sentence_transformers import SentenceTransformer
 import warnings
-
-# Importa a lógica de indexação do novo módulo.
 from logic_indexing import executar_indexacao, criar_indice_se_necessario, NOME_DO_INDICE
+from logic_indexing import carregar_modelo, conectar_elasticsearch, buscar_semantica
 
-# --- Configurações da Página ---
 st.set_page_config(page_title="Buscador Semântico", page_icon="🔎", layout="centered")
 warnings.filterwarnings("ignore", "Unverified HTTPS request")
-
-# --- Constante do Modelo ---
-MODELO_EMBEDDING = 'paraphrase-multilingual-MiniLM-L12-v2'
-
-# --- Cache de Recursos ---
-@st.cache_resource
-def carregar_modelo():
-    return SentenceTransformer(MODELO_EMBEDDING)
-
-@st.cache_resource
-def conectar_elasticsearch():
-    client = Elasticsearch(
-        hosts=["http://localhost:9200"],
-        verify_certs=False,
-        ssl_show_warn=False
-    )
-    if not client.ping():
-        st.error("Falha na conexão com Elasticsearch. Verifique os contêineres Docker.")
-        return None
-    return client
-
-# --- Lógica da Busca ---
-def buscar_semantica(client, model, consulta: str, top_k: int = 3):
-    """Executa a busca semântica KNN no índice."""
-    vetor_consulta = model.encode(consulta)
-    query_knn = {
-        "field": "embedding_texto",
-        "query_vector": vetor_consulta,
-        "k": top_k,
-        "num_candidates": 10
-    }
-    try:
-        response = client.search(
-            index=NOME_DO_INDICE,
-            knn=query_knn,
-            source=["texto", "fonte_arquivo"]
-        )
-        return response['hits']['hits']
-    except Exception as e:
-        st.error(f"Erro na busca: {e}")
-        return []
-
-# --- Construção da Interface ---
 
 # Carrega os recursos pesados no início
 modelo = carregar_modelo()
 cliente_es = conectar_elasticsearch()
+
+# --- Construção da Interface ---
 
 # Barra lateral para ações administrativas
 with st.sidebar:

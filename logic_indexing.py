@@ -2,11 +2,29 @@ import os
 import pandas as pd
 import fitz  # A biblioteca PyMuPDF é importada como 'fitz'
 from elasticsearch.helpers import bulk
+from sentence_transformers import SentenceTransformer
+from elasticsearch import Elasticsearch
+import streamlit as st
 
 # --- Constantes ---
 PASTA_DADOS = 'data'
 NOME_DO_INDICE = 'buscador_semantico'
 DIMENSAO_VETOR = 384
+MODELO_EMBEDDING = 'paraphrase-multilingual-MiniLM-L12-v2'
+
+def carregar_modelo():
+    return SentenceTransformer(MODELO_EMBEDDING)
+
+def conectar_elasticsearch():
+    client = Elasticsearch(
+        hosts=["http://localhost:9200"],
+        verify_certs=False,
+        ssl_show_warn=False
+    )
+    if not client.ping():
+        st.error("Falha na conexão com Elasticsearch. Verifique os contêineres Docker.")
+        return None
+    return client
 
 def criar_indice_se_necessario(client):
     """Cria o índice com o mapeamento correto se ele não existir."""
@@ -97,3 +115,22 @@ def executar_indexacao(client, model):
     except Exception as e:
         print(f"Erro crítico durante a execução do bulk: {e}")
         return 0, -1
+    
+def buscar_semantica(client, model, consulta: str, top_k: int = 3):
+    vetor_consulta = model.encode(consulta)
+    query_knn = {
+        "field": "embedding_texto",
+        "query_vector": vetor_consulta,
+        "k": top_k,
+        "num_candidates": 10
+    }
+    try:
+        response = client.search(
+            index=NOME_DO_INDICE,
+            knn=query_knn,
+            source=["texto", "fonte_arquivo"]
+        )
+        return response['hits']['hits']
+    except Exception as e:
+        st.error(f"Erro na busca: {e}")
+        return []
