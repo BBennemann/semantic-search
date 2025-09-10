@@ -27,7 +27,6 @@ def conectar_elasticsearch():
     return client
 
 def criar_indice_se_necessario(client):
-    """Cria o índice com o mapeamento correto se ele não existir."""
     mapeamento = {
         "properties": {
             "texto": {"type": "text"},
@@ -42,7 +41,6 @@ def criar_indice_se_necessario(client):
         client.indices.create(index=NOME_DO_INDICE, mappings=mapeamento)
 
 def gerar_documentos(model):
-    """Lê arquivos .txt, .csv e .pdf da pasta 'data' e gera os documentos para indexação."""
     if not os.path.isdir(PASTA_DADOS):
         return
 
@@ -103,8 +101,6 @@ def gerar_documentos(model):
 
 
 def executar_indexacao(client, model):
-    """Orquestra a indexação em lote."""
-    print("Iniciando indexação em lote...")
     try:
         sucessos, erros = bulk(
             client=client,
