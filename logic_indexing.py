@@ -11,6 +11,7 @@ PASTA_DADOS = 'data'
 NOME_DO_INDICE = 'buscador_semantico'
 DIMENSAO_VETOR = 384
 MODELO_EMBEDDING = 'paraphrase-multilingual-MiniLM-L12-v2'
+TAMANHO_LOTE_ENCODE = 32
 
 def carregar_modelo():
     return SentenceTransformer(MODELO_EMBEDDING)
@@ -22,8 +23,7 @@ def conectar_elasticsearch():
         ssl_show_warn=False
     )
     if not client.ping():
-        st.error("Falha na conexão com Elasticsearch. Verifique os contêineres Docker.")
-        return None
+        raise ConnectionError("Falha na conexão com Elasticsearch.")
     return client
 
 def criar_indice_se_necessario(client):
@@ -40,64 +40,61 @@ def criar_indice_se_necessario(client):
     if not client.indices.exists(index=NOME_DO_INDICE):
         client.indices.create(index=NOME_DO_INDICE, mappings=mapeamento)
 
+def _extrair_textos_csv(caminho_arquivo):
+    df = pd.read_csv(caminho_arquivo)
+    textos = []
+    if 'texto' in df.columns:
+        textos = df['texto'].dropna().astype(str).tolist()
+    return textos
+
+def _extrair_textos_txt(caminho_arquivo):
+    with open(caminho_arquivo, 'r', encoding='utf-8') as f:
+        conteudo = f.read()
+    return [p.strip() for p in conteudo.split('\n\n') if p.strip()]
+
+def _extrair_textos_pdf(caminho_arquivo):
+    textos = []
+    try:
+        with fitz.open(caminho_arquivo) as doc:
+            for pagina in doc:
+                texto_pagina = pagina.get_text("text")
+                if texto_pagina.strip():
+                    paragrafos = [p.strip() for p in texto_pagina.split('\n\n') if p.strip()]
+                    textos.extend(paragrafos)
+    except Exception as e:
+        print(f"\nErro ao processar o PDF {os.path.basename(caminho_arquivo)}: {e}")
+    return textos
+
+
 def gerar_documentos(model):
     if not os.path.isdir(PASTA_DADOS):
         return
 
     for nome_arquivo in os.listdir(PASTA_DADOS):
         caminho_arquivo = os.path.join(PASTA_DADOS, nome_arquivo)
+        textos_fonte = []
 
-        # Processa arquivos .csv
         if nome_arquivo.endswith('.csv'):
-            df = pd.read_csv(caminho_arquivo)
-            for _, row in df.iterrows():
-                texto = row.get('texto')
-                if texto and isinstance(texto, str):
-                    yield {
-                        "_index": NOME_DO_INDICE,
-                        "_source": {
-                            "texto": texto,
-                            "embedding_texto": model.encode(texto),
-                            "fonte_arquivo": nome_arquivo
-                        }
-                    }
-        
-        # Processa arquivos .txt
+            textos_fonte = _extrair_textos_csv(caminho_arquivo)
         elif nome_arquivo.endswith('.txt'):
-            with open(caminho_arquivo, 'r', encoding='utf-8') as f:
-                conteudo = f.read()
-                # Divide o texto em parágrafos para indexar pedaços menores
-                paragrafos = [p.strip() for p in conteudo.split('\n\n') if p.strip()]
-                for paragrafo in paragrafos:
-                    yield {
-                        "_index": NOME_DO_INDICE,
-                        "_source": {
-                            "texto": paragrafo,
-                            "embedding_texto": model.encode(paragrafo),
-                            "fonte_arquivo": nome_arquivo
-                        }
-                    }
-
-        # Processa arquivos .pdf
+            textos_fonte = _extrair_textos_txt(caminho_arquivo)
         elif nome_arquivo.endswith('.pdf'):
-            try:
-                with fitz.open(caminho_arquivo) as doc:
-                    for pagina in doc:
-                        texto_pagina = pagina.get_text("text")
-                        # Se a página tiver texto, divide em parágrafos
-                        if texto_pagina.strip():
-                            paragrafos = [p.strip() for p in texto_pagina.split('\n\n') if p.strip()]
-                            for paragrafo in paragrafos:
-                                yield {
-                                    "_index": NOME_DO_INDICE,
-                                    "_source": {
-                                        "texto": paragrafo,
-                                        "embedding_texto": model.encode(paragrafo),
-                                        "fonte_arquivo": nome_arquivo
-                                    }
-                                }
-            except Exception as e:
-                print(f"\nErro ao processar o PDF {nome_arquivo}: {e}")
+            textos_fonte = _extrair_textos_pdf(caminho_arquivo)
+        
+        for i in range(0, len(textos_fonte), TAMANHO_LOTE_ENCODE): 
+            lote_textos = textos_fonte[i:i + TAMANHO_LOTE_ENCODE] 
+            
+            lote_embeddings = model.encode(lote_textos) 
+            
+            for texto, embedding in zip(lote_textos, lote_embeddings):
+                yield {
+                    "_index": NOME_DO_INDICE,
+                    "_source": {
+                        "texto": texto,
+                        "embedding_texto": embedding,
+                        "fonte_arquivo": nome_arquivo
+                    }
+                }
 
 
 def executar_indexacao(client, model):
@@ -120,13 +117,26 @@ def buscar_semantica(client, model, consulta: str, top_k: int = 3):
         "k": top_k,
         "num_candidates": 10
     }
-    try:
-        response = client.search(
-            index=NOME_DO_INDICE,
-            knn=query_knn,
-            source=["texto", "fonte_arquivo"]
-        )
-        return response['hits']['hits']
-    except Exception as e:
-        st.error(f"Erro na busca: {e}")
+
+    response = client.search(
+        index=NOME_DO_INDICE,
+        knn=query_knn,
+        source=["texto", "fonte_arquivo"]
+    )
+    return response['hits']['hits']
+
+def listar_fontes_indexadas(client):
+    if not client.indices.exists(index=NOME_DO_INDICE):
         return []
+        
+    query = {
+        "size": 0,
+        "aggs": {
+            "fontes_unicas": {
+                "terms": {"field": "fonte_arquivo", "size": 1000}
+            }
+        }
+    }
+    response = client.search(index=NOME_DO_INDICE, body=query)
+    buckets = response['aggregations']['fontes_unicas']['buckets']
+    return [bucket['key'] for bucket in buckets]
