@@ -1,6 +1,6 @@
 import streamlit as st
 import warnings
-from logic_indexing import executar_indexacao, criar_indice_se_necessario, NOME_DO_INDICE
+from logic_indexing import executar_indexacao, criar_indice_se_necessario, NOME_DO_INDICE, apagar_documentos_por_fonte
 from logic_indexing import carregar_modelo, conectar_elasticsearch, buscar_semantica, listar_fontes_indexadas
 from elasticsearch import ConnectionError
 
@@ -52,9 +52,20 @@ with st.sidebar:
         lista_de_arquivos = carregar_documentos_indexados(cliente_es)
     
     if lista_de_arquivos:
-        with st.expander(f"{len(lista_de_arquivos)} ficheiros encontrados", expanded=True):
+         with st.expander("Ver documentos indexados", expanded=True):
             for nome_arquivo in sorted(lista_de_arquivos):
-                st.markdown(f"📄 `{nome_arquivo}`")
+                col1, col2 = st.columns([0.8, 0.2]) # Ajuste das colunas
+                with col1:
+                    st.markdown(f"📄 `{nome_arquivo}`")
+                with col2:
+                    if st.button("🗑️", key=f"delete_{nome_arquivo}", help=f"Apagar {nome_arquivo}"):
+                        try:
+                            apagados = apagar_documentos_por_fonte(cliente_es, nome_arquivo)
+                            st.toast(f"Ficheiro '{nome_arquivo}' ({apagados} partes) apagado!")
+                            st.cache_data.clear()
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Falha ao apagar {nome_arquivo}.")
     else:
         st.info("Nenhum documento foi indexado ainda.")
 

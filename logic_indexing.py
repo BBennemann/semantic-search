@@ -12,6 +12,8 @@ NOME_DO_INDICE = 'buscador_semantico'
 DIMENSAO_VETOR = 384
 MODELO_EMBEDDING = 'paraphrase-multilingual-MiniLM-L12-v2'
 TAMANHO_LOTE_ENCODE = 32
+TAMANHO_MAX_CHUNK = 1024
+SOBREPOSICAO_CHUNK = 128
 
 def carregar_modelo():
     return SentenceTransformer(MODELO_EMBEDDING)
@@ -40,30 +42,54 @@ def criar_indice_se_necessario(client):
     if not client.indices.exists(index=NOME_DO_INDICE):
         client.indices.create(index=NOME_DO_INDICE, mappings=mapeamento)
 
+def _dividir_texto_em_partes(texto_completo: str) -> list[str]:
+    if not texto_completo or len(texto_completo) < TAMANHO_MAX_CHUNK:
+        return [texto_completo] if texto_completo else []
+
+    partes = []
+    inicio = 0
+    while inicio < len(texto_completo):
+        fim = inicio + TAMANHO_MAX_CHUNK
+        # Garante que o corte não exceda o tamanho do texto
+        fim = min(fim, len(texto_completo))
+        
+        # Pega o pedaço inicial
+        parte = texto_completo[inicio:fim]
+        partes.append(parte.strip())
+        
+        # Move o início para a próxima posição, considerando a sobreposição
+        proximo_inicio = inicio + TAMANHO_MAX_CHUNK - SOBREPOSICAO_CHUNK
+        
+        # Se o próximo início for o mesmo ou anterior, evita loop infinito
+        if proximo_inicio <= inicio:
+            break
+        inicio = proximo_inicio
+        
+    return [p for p in partes if p]
+
 def _extrair_textos_csv(caminho_arquivo):
     df = pd.read_csv(caminho_arquivo)
     textos = []
     if 'texto' in df.columns:
-        textos = df['texto'].dropna().astype(str).tolist()
+        texto_completo = " ".join(df['texto'].dropna().astype(str).tolist())
+        textos = _dividir_texto_em_partes(texto_completo)
     return textos
 
 def _extrair_textos_txt(caminho_arquivo):
     with open(caminho_arquivo, 'r', encoding='utf-8') as f:
         conteudo = f.read()
-    return [p.strip() for p in conteudo.split('\n\n') if p.strip()]
+    return _dividir_texto_em_partes(conteudo)
 
 def _extrair_textos_pdf(caminho_arquivo):
-    textos = []
+    texto_completo = ""
     try:
         with fitz.open(caminho_arquivo) as doc:
             for pagina in doc:
-                texto_pagina = pagina.get_text("text")
-                if texto_pagina.strip():
-                    paragrafos = [p.strip() for p in texto_pagina.split('\n\n') if p.strip()]
-                    textos.extend(paragrafos)
+                texto_completo += pagina.get_text("text") + "\n"
     except Exception as e:
         print(f"\nErro ao processar o PDF {os.path.basename(caminho_arquivo)}: {e}")
-    return textos
+    
+    return _dividir_texto_em_partes(texto_completo.strip())
 
 
 def gerar_documentos(model):
@@ -140,3 +166,19 @@ def listar_fontes_indexadas(client):
     response = client.search(index=NOME_DO_INDICE, body=query)
     buckets = response['aggregations']['fontes_unicas']['buckets']
     return [bucket['key'] for bucket in buckets]
+
+def apagar_documentos_por_fonte(client, nome_arquivo: str):
+    query = {
+        "query": {
+            "term": {
+                "fonte_arquivo": nome_arquivo
+            }
+        }
+    }
+    try:
+        response = client.delete_by_query(index=NOME_DO_INDICE, body=query, refresh=True)
+        apagados = response.get('deleted', 0)
+        return apagados
+    except Exception as e:
+        print(f"Erro ao apagar documentos do ficheiro {nome_arquivo}: {e}")
+        raise e
