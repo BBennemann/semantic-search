@@ -42,6 +42,16 @@ def criar_indice_se_necessario(client):
     if not client.indices.exists(index=NOME_DO_INDICE):
         client.indices.create(index=NOME_DO_INDICE, mappings=mapeamento)
 
+def salvar_arquivo_recebido(nome_arquivo: str, bytes_arquivo: bytes):
+    """Salva os bytes de um arquivo no diretório de dados."""
+    if not os.path.exists(PASTA_DADOS):
+        os.makedirs(PASTA_DADOS)
+
+    caminho_arquivo = os.path.join(PASTA_DADOS, nome_arquivo)
+    with open(caminho_arquivo, "wb") as f:
+        f.write(bytes_arquivo)
+    return caminho_arquivo
+
 def _dividir_texto_em_partes(texto_completo: str) -> list[str]:
     if not texto_completo or len(texto_completo) < TAMANHO_MAX_CHUNK:
         return [texto_completo] if texto_completo else []
@@ -124,11 +134,15 @@ def gerar_documentos(model):
 
 
 def executar_indexacao(client, model):
+    if not os.path.isdir(PASTA_DADOS):
+        return 0, 0
+
     try:
         sucessos, erros = bulk(
             client=client,
             actions=gerar_documentos(model),
-            raise_on_error=False
+            raise_on_error=False,
+            refresh=True
         )
         return sucessos, len(erros)
     except Exception as e:
@@ -155,16 +169,8 @@ def listar_fontes_indexadas(client):
     if not client.indices.exists(index=NOME_DO_INDICE):
         return []
         
-    query = {
-        "size": 0,
-        "aggs": {
-            "fontes_unicas": {
-                "terms": {"field": "fonte_arquivo", "size": 1000}
-            }
-        }
-    }
-    response = client.search(index=NOME_DO_INDICE, body=query)
-    buckets = response['aggregations']['fontes_unicas']['buckets']
+    response = client.search(index=NOME_DO_INDICE, size=0, aggs={"fontes_unicas": {"terms": {"field": "fonte_arquivo", "size":1000}}})
+    buckets = response.get('aggregations', {}).get('fontes_unicas', {}).get('buckets', [])
     return [bucket['key'] for bucket in buckets]
 
 def apagar_documentos_por_fonte(client, nome_arquivo: str):

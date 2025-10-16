@@ -1,7 +1,8 @@
 import streamlit as st
 import warnings
-from logic_indexing import executar_indexacao, criar_indice_se_necessario, NOME_DO_INDICE, apagar_documentos_por_fonte
-from logic_indexing import carregar_modelo, conectar_elasticsearch, buscar_semantica, listar_fontes_indexadas
+import os
+from logic_indexing import executar_indexacao, criar_indice_se_necessario, NOME_DO_INDICE, apagar_documentos_por_fonte, salvar_arquivo_recebido
+from logic_indexing import carregar_modelo, conectar_elasticsearch, buscar_semantica, listar_fontes_indexadas, PASTA_DADOS
 from elasticsearch import ConnectionError
 
 st.set_page_config(page_title="Buscador Semântico", page_icon="🔎", layout="centered")
@@ -46,6 +47,33 @@ with st.sidebar:
             st.error("Conexão ou modelo de IA indisponível.")
 
     st.divider() 
+
+    st.header("Upload e Indexar Novos Documentos")
+    arquivos_upload = st.file_uploader(
+        "Escolha os arquivos para upload (.txt, .pdf, .csv)",
+        type=["txt", "pdf", "csv"],
+        accept_multiple_files=True,
+    )
+
+    if st.button("Processar e Indexar Arquivos"):
+        if arquivos_upload:
+            with st.spinner("Processando e indexando os novos arquivos..."):
+                for arquivo in arquivos_upload:
+                    salvar_arquivo_recebido(arquivo.name, arquivo.getbuffer())
+
+                # A indexação agora processará todos os arquivos na pasta de dados
+                sucessos, falhas = executar_indexacao(cliente_es, modelo)
+                st.success(
+                    f"Indexação concluída: {sucessos} documentos processados."
+                )
+                if falhas > 0:
+                    st.warning(f"{falhas} documentos falharam durante a indexação.")
+                # Limpa o cache para que a lista de arquivos seja atualizada
+                st.cache_data.clear()
+        else:
+            st.warning("Por favor, faça o upload de pelo menos um arquivo.")
+
+    st.divider()
 
     st.header("Documentos no Índice")
     with st.spinner("Carregando lista de documentos..."):
