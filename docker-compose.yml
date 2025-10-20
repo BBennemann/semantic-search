@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
 
   elasticsearch:
@@ -7,17 +5,17 @@ services:
     container_name: elasticsearch_semantico
     environment:
       - discovery.type=single-node
-      # Desativa a segurança para facilitar o desenvolvimento local. NÃO FAÇA ISSO EM PRODUÇÃO.
       - xpack.security.enabled=false
-      # Limita o uso de memória do Elasticsearch para evitar que ele consuma toda a sua RAM.
-      # Ajuste '1g' (1 gigabyte) conforme a memória disponível na sua máquina. '512m' também é uma boa opção.
-      - "ES_JAVA_OPTS=-Xms1g -Xmx1g"
+      - "ES_JAVA_OPTS=-Xms${ES_MEM_LIMIT:-1g} -Xmx${ES_MEM_LIMIT:-1g}"
     ports:
+      # Port for host access (e.g., browser or external tools)
       - "9200:9200"
     volumes:
       - esdata:/usr/share/elasticsearch/data
     networks:
       - elastic_net
+    env_file:
+      - .env
 
   kibana:
     image: docker.elastic.co/kibana/kibana:8.14.0
@@ -25,14 +23,38 @@ services:
     ports:
       - "5601:5601"
     environment:
-      # Diz ao Kibana onde encontrar o Elasticsearch.
-      # 'elasticsearch' é o nome do serviço definido acima.
-      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+      # Kibana connects to Elasticsearch using the service name within the Docker network
+      - ELASTICSEARCH_HOSTS=${ELASTICSEARCH_HOSTS:-http://elasticsearch:9200}
     depends_on:
-      # Garante que o Elasticsearch será iniciado antes do Kibana.
       - elasticsearch
     networks:
       - elastic_net
+    env_file:
+      - .env
+
+  # --- NEW SERVICE FOR THE STREAMLIT APP ---
+  app:
+    container_name: streamlit_semantico
+    # Build the image using the Dockerfile in the current directory (.)
+    build: .
+    ports:
+      # Map host port 8501 to container port 8501 (Streamlit default)
+      - "8501:8501"
+    volumes:
+      # Mount the data directory into the container so the app can access uploaded files
+      # Use ./data for the host path and /app/data for the container path (consistent with .env)
+      - ./data:/app/data
+    networks:
+      - elastic_net
+    # Make the app wait for Elasticsearch to be healthy (basic check)
+    depends_on:
+      - elasticsearch
+    # Pass environment variables from the .env file to the app container
+    env_file:
+      - .env
+    # Optional: Restart policy
+    restart: unless-stopped
+  # --- END OF NEW SERVICE ---
 
 networks:
   elastic_net:
